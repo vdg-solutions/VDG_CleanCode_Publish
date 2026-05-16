@@ -129,9 +129,7 @@ nav {
 .carousel-slide { min-width: 100%; }
 .carousel-slide img {
   width: 100%;
-  aspect-ratio: 16 / 9;
-  object-fit: cover;
-  object-position: top center;
+  height: auto;
   display: block;
   cursor: zoom-in;
 }
