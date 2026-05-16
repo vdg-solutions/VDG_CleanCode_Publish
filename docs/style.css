@@ -131,13 +131,10 @@ nav {
   width: 100%;
   aspect-ratio: 16 / 9;
   object-fit: cover;
-  object-position: top left;
+  object-position: top center;
   display: block;
   cursor: zoom-in;
-  filter: blur(4px);
-  transition: filter 0.3s ease;
 }
-.carousel-slide img:hover { filter: blur(0); }
 
 /* Lightbox */
 .lightbox {
