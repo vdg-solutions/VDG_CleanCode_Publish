@@ -116,9 +116,9 @@
   <section class="download-section" id="download">
     <h2>Ready to cut your labor cost?</h2>
     <p>Download the Windows installer and start shipping faster today.</p>
-    <a class="btn-download" href="https://github.com/vdg-solutions/VDG_CleanCode_Publish/releases" target="_blank" rel="noopener noreferrer">
+    <a class="btn-download" id="dl-btn" href="https://github.com/vdg-solutions/VDG_CleanCode_Publish/releases" target="_blank" rel="noopener noreferrer">
       <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2z"/></svg>
-      Download CleanCode 1.6.1
+      <span id="dl-label">Download CleanCode</span>
     </a>
     <p class="download-note">Proprietary license • Windows 10/11 • ~80 MB</p>
   </section>
@@ -146,6 +146,21 @@
     }
     function setSlide(n) { cur = n; show(); }
     setInterval(() => goSlide(1), 5000);
+
+    // Fetch latest release — update button text + link to .exe asset
+    (async () => {
+      try {
+        const r = await fetch('https://api.github.com/repos/vdg-solutions/VDG_CleanCode_Publish/releases/latest');
+        if (!r.ok) return;
+        const rel = await r.json();
+        const label = document.getElementById('dl-label');
+        const btn = document.getElementById('dl-btn');
+        if (label) label.textContent = 'Download CleanCode ' + rel.tag_name.replace(/^v/, '');
+        const exe = rel.assets?.find(a => a.name.endsWith('.exe'));
+        if (exe && btn) btn.href = exe.browser_download_url;
+        else if (btn) btn.href = rel.html_url;
+      } catch (_) { /* keep fallback href */ }
+    })();
   </script>
 </body>
 </html>
