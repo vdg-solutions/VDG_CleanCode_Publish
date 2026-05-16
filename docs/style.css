@@ -127,7 +127,36 @@ nav {
   transition: transform 0.4s ease;
 }
 .carousel-slide { min-width: 100%; }
-.carousel-slide img { width: 100%; display: block; }
+.carousel-slide img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  object-position: top left;
+  display: block;
+  cursor: zoom-in;
+}
+
+/* Lightbox */
+.lightbox {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.92);
+  display: none;
+  align-items: center; justify-content: center;
+  z-index: 1000;
+  padding: 2rem;
+  cursor: zoom-out;
+}
+.lightbox.open { display: flex; }
+.lightbox img { max-width: 100%; max-height: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.6); }
+.lightbox-close {
+  position: absolute; top: 1.5rem; right: 2rem;
+  background: rgba(255,255,255,0.15); color: #fff;
+  border: none; border-radius: 50%;
+  width: 40px; height: 40px;
+  font-size: 1.3rem; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.lightbox-close:hover { background: rgba(255,255,255,0.3); }
 .carousel-slide .slide-placeholder {
   width: 100%; aspect-ratio: 16/9;
   background: linear-gradient(135deg, #1c2e5a, var(--navy));

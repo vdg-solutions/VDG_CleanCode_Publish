@@ -123,6 +123,12 @@
     <p class="download-note">Proprietary license • Windows 10/11 • ~80 MB</p>
   </section>
 
+  <!-- LIGHTBOX -->
+  <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Screenshot viewer">
+    <button class="lightbox-close" id="lightbox-close" aria-label="Close">&times;</button>
+    <img id="lightbox-img" src="" alt="">
+  </div>
+
   <!-- FOOTER -->
   <footer>
     <p>© VDG Solutions — <a href="#top">Labor AI</a></p>
@@ -146,6 +152,21 @@
     }
     function setSlide(n) { cur = n; show(); }
     setInterval(() => goSlide(1), 5000);
+
+    // Lightbox — click slide image to expand
+    const lb = document.getElementById('lightbox');
+    const lbImg = document.getElementById('lightbox-img');
+    document.querySelectorAll('.carousel-slide img').forEach(img => {
+      img.addEventListener('click', () => {
+        lbImg.src = img.src;
+        lbImg.alt = img.alt;
+        lb.classList.add('open');
+      });
+    });
+    function closeLB() { lb.classList.remove('open'); }
+    document.getElementById('lightbox-close').addEventListener('click', closeLB);
+    lb.addEventListener('click', e => { if (e.target === lb) closeLB(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && lb.classList.contains('open')) closeLB(); });
 
     // Fetch latest release — update button text + link to .exe asset
     (async () => {
