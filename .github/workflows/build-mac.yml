@@ -46,7 +46,7 @@ jobs:
         with:
           repository: vuminhquang/VDG_CleanCode      # owner's real source remote; also the PRIVATE_SRC_PAT scope
           token: ${{ secrets.PRIVATE_SRC_PAT }}
-          ref: main      # TEMP: validate build.ps1 macOS-path fix from main (not yet in tag v1.6.24); revert to steps.ver.outputs.ref once tag formalized
+          ref: ${{ steps.ver.outputs.ref }}
           persist-credentials: false
 
       - name: Setup .NET 10
