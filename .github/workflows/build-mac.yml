@@ -54,6 +54,14 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
+      # build.ps1 obfuscates the server with BitMono (-p:Obfuscate=true). bitmono.console is not on the
+      # runner by default; install the pinned global tool so obfuscation runs on macOS as on Windows.
+      - name: Install BitMono obfuscator (pinned)
+        shell: bash
+        run: |
+          dotnet tool install --global BitMono.GlobalTool --version 0.39.0
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
