@@ -105,6 +105,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}   # release goes to THIS repo, not the checked-out source remote
           TAG: v${{ steps.ver.outputs.num }}
         run: |
           gh release create "$TAG" --title "CleanCode $TAG (macOS)" --generate-notes || true
