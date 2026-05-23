@@ -1,0 +1,94 @@
+# #421 macOS CI build — lives in the PUBLIC repo vdg-solutions/VDG_CleanCode_Publish (no source
+# committed there). Builds the unsigned universal .dmg on a free public macOS runner, checking out
+# the PRIVATE source ephemerally via a read-only PAT, and uploads to this repo's own release.
+name: Build macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g. 1.6.23)"
+        required: true
+  repository_dispatch:
+    types: [build-mac]
+# AC#2: only manual + cross-repo dispatch — no pull_request trigger (blocks fork-PR secret exfil).
+
+concurrency:
+  # key by version so duplicate builds of the same version don't race (run_id would be a no-op)
+  group: build-mac-${{ github.event.inputs.version || github.event.client_payload.version }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # upload .dmg to THIS public repo's release via the built-in GITHUB_TOKEN
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Resolve version + ref
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ github.event.inputs.version }}"
+          else
+            V="${{ github.event.client_payload.version }}"
+          fi
+          echo "num=$V" >> "$GITHUB_OUTPUT"
+          echo "ref=v$V" >> "$GITHUB_OUTPUT"
+
+      # AC#1 / source-leak: private source checked out ONLY onto the ephemeral runner, never
+      # committed here. persist-credentials:false keeps the PAT out of the on-disk git config.
+      - name: Checkout private source (read-only PAT)
+        uses: actions/checkout@v6
+        with:
+          repository: vuminhquang/VDG_CleanCode      # owner's real source remote; also the PRIVATE_SRC_PAT scope
+          token: ${{ secrets.PRIVATE_SRC_PAT }}
+          ref: ${{ steps.ver.outputs.ref }}
+          persist-credentials: false
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: src/clients/desktop/package-lock.json
+
+      # build.ps1 -Platform mac -CI: AOT publish (universal osx-arm64 + osx-x64 lipo) + ad-hoc
+      # codesign (no Apple cert) + electron-builder --mac dmg. Unsigned per #421 No-signing column.
+      - name: Build (universal unsigned dmg)
+        shell: pwsh
+        env:
+          CLEANCODE_VERSION: ${{ steps.ver.outputs.num }}
+          # no Apple cert on the runner → force electron-builder to skip app signing (avoids
+          # a sign-step hang/fail). The ad-hoc binary codesign in build.ps1 is separate + fine.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: pwsh scripts/build-desktop.ps1 -Platform mac -CI
+
+      - name: Verify dotnet dist
+        shell: bash
+        run: |
+          ls -la dist/server/ || (echo "MISSING dist/server" && exit 1)
+          ls -la dist/agent/  || (echo "MISSING dist/agent"  && exit 1)
+
+      # AC#5: artifact uploaded to a VDG_CleanCode_Publish release. Same-repo upload uses the
+      # built-in GITHUB_TOKEN — no RELEASE_REPO_PAT needed.
+      - name: Upload dmg to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ steps.ver.outputs.num }}
+        run: |
+          gh release create "$TAG" --title "CleanCode $TAG (macOS)" --generate-notes || true
+          # only the .dmg — latest-mac.yml is useless for unsigned builds (Mac auto-update is off)
+          find src/clients/desktop/dist -type f -name "*.dmg" -print0 \
+            | xargs -0 -I {} gh release upload "$TAG" {} --clobber
+# AC#3: no secret echoed to logs; keep the repo's ACTIONS_STEP_DEBUG unset. AC#4: PRIVATE_SRC_PAT
+# is fine-grained, read-only, single-repo, rotated per the repo secret-rotation note. AC#6:
+# independent triggers leave pages.yml (GitHub Pages) untouched.
