@@ -127,7 +127,9 @@ jobs:
           GH_REPO: ${{ github.repository }}   # release goes to THIS repo, not the checked-out source remote
           TAG: v${{ steps.ver.outputs.num }}
         run: |
-          gh release create "$TAG" --title "CleanCode $TAG (macOS)" --generate-notes || true
+          # v$num tag lives on the private source, not here — target Publish's master HEAD so create works
+          # without the source tag being pushed (fixes the "tag exists locally but not pushed" race vs release.ps1)
+          gh release create "$TAG" --target master --title "CleanCode $TAG (macOS)" --generate-notes || true
           # only the .dmg — latest-mac.yml is useless for unsigned builds (Mac auto-update is off)
           find src/clients/desktop/dist -type f -name "*.dmg" -print0 \
             | xargs -0 -I {} gh release upload "$TAG" {} --clobber
