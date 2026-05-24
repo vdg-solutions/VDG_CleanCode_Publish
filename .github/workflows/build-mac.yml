@@ -82,6 +82,18 @@ jobs:
             --configfile NuGet.config
           dotnet nuget disable source vdg-local --configfile NuGet.config
 
+      # #472-E E-3: build.ps1 -Platform mac calls build-sandbox.ps1 (after the agent-publish) which
+      # cargo-builds the macOS seatbelt thin-bin (src/native/macos-seatbelt-spawn — reuses codex
+      # codex_sandboxing::seatbelt::create_seatbelt_command_args, execs /usr/bin/sandbox-exec). The .dmg is
+      # universal, so the bin must be too: install both darwin targets; build-sandbox's mac branch lipo's them.
+      - name: Setup Rust toolchain (macOS sandbox bin, universal)
+        shell: bash
+        run: |
+          rustup default stable
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustc --version && cargo --version
+
       # build.ps1 -Platform mac -CI: AOT publish (universal osx-arm64 + osx-x64 lipo) + ad-hoc
       # codesign (no Apple cert) + electron-builder --mac dmg. Unsigned per #421 No-signing column.
       - name: Build (universal unsigned dmg)
@@ -98,6 +110,13 @@ jobs:
         run: |
           ls -la dist/server/ || (echo "MISSING dist/server" && exit 1)
           ls -la dist/agent/  || (echo "MISSING dist/agent"  && exit 1)
+
+      # #472-E E-3: prove the BUNDLED seatbelt sandbox actually enforces on this mac runner (round-trip:
+      # inside-write OK / outside-write BLOCKED / network BLOCKED + a control proving the path is writable
+      # un-sandboxed). Parity with the Windows live-verify. Gates the release — exits non-zero on any failure.
+      - name: Verify macOS seatbelt sandbox (round-trip)
+        shell: bash
+        run: bash scripts/verify-sandbox-mac.sh
 
       # AC#5: artifact uploaded to a VDG_CleanCode_Publish release. Same-repo upload uses the
       # built-in GITHUB_TOKEN — no RELEASE_REPO_PAT needed.
