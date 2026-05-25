@@ -118,6 +118,12 @@ jobs:
         shell: bash
         run: bash scripts/verify-sandbox-mac.sh
 
+      # #491 mac no-stream gate: a real-Kestrel SSE test proves osx honors per-event flush (DisableBuffering)
+      # so replies stream token-by-token, not a ~20s batch. Runs on the runner before upload — gates the dmg.
+      - name: Verify SSE streaming (StreamSmoke — osx Kestrel honors flush)
+        shell: bash
+        run: dotnet test src/server/VDG.CleanCode.Tests/VDG.CleanCode.Tests.csproj --filter "FullyQualifiedName~StreamSmoke" -c Release
+
       # AC#5: artifact uploaded to a VDG_CleanCode_Publish release. Same-repo upload uses the
       # built-in GITHUB_TOKEN — no RELEASE_REPO_PAT needed.
       - name: Upload dmg to release
