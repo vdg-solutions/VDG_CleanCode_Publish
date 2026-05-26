@@ -136,8 +136,10 @@ jobs:
           # v$num tag lives on the private source, not here — target Publish's master HEAD so create works
           # without the source tag being pushed (fixes the "tag exists locally but not pushed" race vs release.ps1)
           gh release create "$TAG" --target master --title "CleanCode $TAG (macOS)" --generate-notes || true
-          # only the .dmg — latest-mac.yml is useless for unsigned builds (Mac auto-update is off)
-          find src/clients/desktop/dist -type f -name "*.dmg" -print0 \
+          # dmg (manual download) + electron-updater feed (latest-mac.yml + the .zip it points to) so the
+          # app's mac update-check finds a feed instead of 404ing. Unsigned can't auto-install → the app is
+          # notify-only (autoDownload=false): it tells the user a new version exists; they grab the .dmg.
+          find src/clients/desktop/dist -type f \( -name "*.dmg" -o -name "*.zip" -o -name "latest-mac.yml" \) -print0 \
             | xargs -0 -I {} gh release upload "$TAG" {} --clobber
 # AC#3: no secret echoed to logs; keep the repo's ACTIONS_STEP_DEBUG unset. AC#4: PRIVATE_SRC_PAT
 # is fine-grained, read-only, single-repo, rotated per the repo secret-rotation note. AC#6:
