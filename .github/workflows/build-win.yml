@@ -1,0 +1,153 @@
+# Windows CI build — DEPLOYED to the PUBLIC repo vdg-solutions/VDG_CleanCode_Publish (no source
+# committed there). Builds the obfuscated win-x64 installer on a free public windows runner, checking
+# out the PRIVATE source ephemerally via a read-only PAT, and uploads to this repo's own release.
+# Mirrors build-mac.yml (#421). The actions/cache step is the tách-Rust fix: the codex Rust sandbox
+# workspace + cargo registry are cached across runs (keyed on Cargo.lock), so only changed crates
+# recompile — no fresh full-workspace build each release (the local release.ps1 tag-worktree had no
+# persistent cache → cold every time).
+name: Build Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g. 1.7.7)"
+        required: true
+  repository_dispatch:
+    types: [build-win]
+
+concurrency:
+  group: build-win-${{ github.event.inputs.version || github.event.client_payload.version }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # upload installer to THIS public repo's release via the built-in GITHUB_TOKEN
+  packages: read    # restore VDG.Matrix.Sdk from vdg-solutions GitHub Packages (public, MIT)
+
+jobs:
+  build-win:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Resolve version + ref
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ github.event.inputs.version }}"
+          else
+            V="${{ github.event.client_payload.version }}"
+          fi
+          echo "num=$V" >> "$GITHUB_OUTPUT"
+          echo "ref=v$V" >> "$GITHUB_OUTPUT"
+
+      # Private source onto the ephemeral runner only; persist-credentials:false keeps the PAT out of
+      # the on-disk git config. Same read-only PRIVATE_SRC_PAT secret as build-mac.yml.
+      - name: Checkout private source (read-only PAT)
+        uses: actions/checkout@v6
+        with:
+          repository: vuminhquang/VDG_CleanCode
+          token: ${{ secrets.PRIVATE_SRC_PAT }}
+          ref: ${{ steps.ver.outputs.ref }}
+          persist-credentials: false
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      # build.ps1 obfuscates the server with BitMono (-p:Obfuscate=true). Install the pinned global
+      # tool so obfuscation runs on the runner as on the dev machine.
+      - name: Install BitMono obfuscator (pinned)
+        shell: bash
+        run: |
+          dotnet tool install --global BitMono.GlobalTool --version 0.39.0
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: src/clients/desktop/package-lock.json
+
+      # VDG.Matrix.Sdk is a vdg-solutions GitHub Packages dep (public, MIT). The repo NuGet.config's
+      # vdg-local feed is %USERPROFILE%-based and invalid on the runner; add the GH Packages source
+      # (auth required even for public GH Packages) and drop the dead local feed, scoped to the checkout.
+      - name: Configure NuGet sources (GH Packages)
+        shell: bash
+        run: |
+          dotnet nuget add source "https://nuget.pkg.github.com/vdg-solutions/index.json" \
+            --name github-vdg --username vdg-solutions \
+            --password "${{ secrets.GITHUB_TOKEN }}" --store-password-in-clear-text \
+            --configfile NuGet.config
+          dotnet nuget disable source vdg-local --configfile NuGet.config
+
+      # build-sandbox.ps1 cargo-builds the codex windows-restricted-spawn thin-bin + codex's own
+      # setup/command-runner bins (WFP, native Windows — can't cross-compile). windows-latest ships
+      # the msvc Rust toolchain via rustup.
+      - name: Setup Rust toolchain (windows-msvc, sandbox bin)
+        shell: bash
+        run: |
+          rustup default stable-msvc
+          rustc --version && cargo --version
+
+      # tách-Rust: persist the cargo registry/git + the codex-build target ($scratch) + the built-bin
+      # cache ($cacheDir) across runs. build-sandbox.ps1 puts CARGO_TARGET_DIR=dist/.codex-build/target
+      # and the bin cache in dist/.sandbox-cache (both repo-local → empty on a fresh checkout). Caching
+      # them here makes the cargo build incremental (cold once, then warm), killing the fresh recompile.
+      - name: Cache Rust (cargo + codex-build target + sandbox-cache)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            dist/.codex-build/target
+            dist/.sandbox-cache
+          key: cargo-win-${{ hashFiles('src/native/**/Cargo.lock', 'docs/refs/codex/codex-rs/Cargo.lock') }}
+          restore-keys: |
+            cargo-win-
+
+      # build.ps1 -Platform win -CI: AOT publish (win-x64) + BitMono obfuscate + sandbox bins +
+      # electron-builder NSIS installer. (Win has no Authenticode signing cert — unsigned, like mac.)
+      - name: Build (win installer)
+        shell: pwsh
+        env:
+          CLEANCODE_VERSION: ${{ steps.ver.outputs.num }}
+        run: pwsh scripts/build-desktop.ps1 -Platform win -CI
+
+      - name: Verify dotnet dist
+        shell: bash
+        run: |
+          ls -la dist/server/ || (echo "MISSING dist/server" && exit 1)
+          ls -la dist/agent/  || (echo "MISSING dist/agent"  && exit 1)
+
+      # Prove the bundled WFP sandbox enforces on the runner (round-trip), parity with the mac
+      # seatbelt verify. Gates the installer — exits non-zero on failure.
+      - name: Verify Windows sandbox (round-trip)
+        shell: pwsh
+        run: pwsh scripts/verify-sandbox-win-bash.ps1
+
+      # #491: real-Kestrel SSE test proves replies stream token-by-token (DisableBuffering honored),
+      # not a batched flush. Gates the installer.
+      - name: Verify SSE streaming (StreamSmoke)
+        shell: bash
+        run: dotnet test src/server/VDG.CleanCode.Tests/VDG.CleanCode.Tests.csproj --filter "FullyQualifiedName~StreamSmoke" -c Release
+
+      # Upload to a VDG_CleanCode_Publish release (same-repo upload via built-in GITHUB_TOKEN).
+      # --target master so create works without the v$num source-tag being pushed here (matches mac-CI,
+      # avoids the race vs release.ps1 — but note: once on CI, release.ps1's local win/linux build is
+      # retired, so this is the sole win producer).
+      - name: Upload installer to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: v${{ steps.ver.outputs.num }}
+          VER: ${{ steps.ver.outputs.num }}
+        run: |
+          gh release create "$TAG" --target master --title "CleanCode $TAG" --generate-notes || true
+          cd src/clients/desktop/dist
+          gh release upload "$TAG" "CleanCode-$VER-setup.exe" --clobber
+          [ -f "CleanCode-$VER-setup.exe.blockmap" ] && gh release upload "$TAG" "CleanCode-$VER-setup.exe.blockmap" --clobber || true
+          [ -f latest.yml ] && gh release upload "$TAG" latest.yml --clobber || true
