@@ -82,17 +82,8 @@ jobs:
             --configfile NuGet.config
           dotnet nuget disable source vdg-local --configfile NuGet.config
 
-      # #472-E E-3: build.ps1 -Platform mac calls build-sandbox.ps1 (after the agent-publish) which
-      # cargo-builds the macOS seatbelt thin-bin (src/native/macos-seatbelt-spawn — reuses codex
-      # codex_sandboxing::seatbelt::create_seatbelt_command_args, execs /usr/bin/sandbox-exec). The .dmg is
-      # universal, so the bin must be too: install both darwin targets; build-sandbox's mac branch lipo's them.
-      - name: Setup Rust toolchain (macOS sandbox bin, universal)
-        shell: bash
-        run: |
-          rustup default stable
-          rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          rustc --version && cargo --version
+      # #493: build-sandbox.ps1 (called by build.ps1 -Platform mac) now DOWNLOADS the pinned, SHA-256-
+      # verified universal seatbelt bin from the VDG_AgentSandBox release — no cargo build, no Rust toolchain.
 
       # build.ps1 -Platform mac -CI: AOT publish (universal osx-arm64 + osx-x64 lipo) + ad-hoc
       # codesign (no Apple cert) + electron-builder --mac dmg. Unsigned per #421 No-signing column.

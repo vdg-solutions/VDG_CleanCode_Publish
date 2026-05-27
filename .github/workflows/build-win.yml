@@ -1,10 +1,9 @@
 # Windows CI build — DEPLOYED to the PUBLIC repo vdg-solutions/VDG_CleanCode_Publish (no source
 # committed there). Builds the obfuscated win-x64 installer on a free public windows runner, checking
 # out the PRIVATE source ephemerally via a read-only PAT, and uploads to this repo's own release.
-# Mirrors build-mac.yml (#421). The actions/cache step is the tách-Rust fix: the codex Rust sandbox
-# workspace + cargo registry are cached across runs (keyed on Cargo.lock), so only changed crates
-# recompile — no fresh full-workspace build each release (the local release.ps1 tag-worktree had no
-# persistent cache → cold every time).
+# Mirrors build-mac.yml (#421). #493: build-sandbox.ps1 DOWNLOADS the pinned, SHA-256-verified sandbox
+# bins from the VDG_AgentSandBox release instead of compiling the codex Rust workspace — so this CI no
+# longer needs a Rust toolchain or cargo cache (the slow per-release recompile is gone).
 name: Build Windows
 
 on:
@@ -83,30 +82,8 @@ jobs:
             --configfile NuGet.config
           dotnet nuget disable source vdg-local --configfile NuGet.config
 
-      # build-sandbox.ps1 cargo-builds the codex windows-restricted-spawn thin-bin + codex's own
-      # setup/command-runner bins (WFP, native Windows — can't cross-compile). windows-latest ships
-      # the msvc Rust toolchain via rustup.
-      - name: Setup Rust toolchain (windows-msvc, sandbox bin)
-        shell: bash
-        run: |
-          rustup default stable-msvc
-          rustc --version && cargo --version
-
-      # tách-Rust: persist the cargo registry/git + the codex-build target ($scratch) + the built-bin
-      # cache ($cacheDir) across runs. build-sandbox.ps1 puts CARGO_TARGET_DIR=dist/.codex-build/target
-      # and the bin cache in dist/.sandbox-cache (both repo-local → empty on a fresh checkout). Caching
-      # them here makes the cargo build incremental (cold once, then warm), killing the fresh recompile.
-      - name: Cache Rust (cargo + codex-build target + sandbox-cache)
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            dist/.codex-build/target
-            dist/.sandbox-cache
-          key: cargo-win-${{ hashFiles('src/native/**/Cargo.lock', 'docs/refs/codex/codex-rs/Cargo.lock') }}
-          restore-keys: |
-            cargo-win-
+      # #493: the sandbox bins are now DOWNLOADED (pinned + SHA-256 verified) by build-sandbox.ps1 from
+      # the VDG_AgentSandBox release — no cargo build here, so no Rust toolchain / cargo cache step.
 
       # build.ps1 -Platform win -CI: AOT publish (win-x64) + BitMono obfuscate + sandbox bins +
       # electron-builder NSIS installer. (Win has no Authenticode signing cert — unsigned, like mac.)
