@@ -1,0 +1,134 @@
+# Linux CI build — DEPLOYED to the PUBLIC repo vdg-solutions/VDG_CleanCode_Publish (no source
+# committed there). Builds the obfuscated linux-x64 AppImage on a free public runner, in the same
+# dotnet/sdk:10.0 container the local cleancode-builder pod uses (glibc parity → portable AppImage).
+# Mirrors build-mac.yml/build-win.yml; inlines the build steps from infra/vdg-cleancode/linux-build/
+# build-cleancode.sh (dotnet AOT publish + electron-builder). NOTE: linux build does NOT compile any
+# Rust (no codex sandbox bin built here), so there is no cargo cache step — unlike win/mac.
+name: Build Linux
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g. 1.7.7)"
+        required: true
+  repository_dispatch:
+    types: [build-linux]
+
+concurrency:
+  group: build-linux-${{ github.event.inputs.version || github.event.client_payload.version }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # upload AppImage to THIS public repo's release via the built-in GITHUB_TOKEN
+  packages: read    # restore VDG.Matrix.Sdk from vdg-solutions GitHub Packages (public, MIT)
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    # Same base as the local cleancode-builder pod → same glibc → portable AppImage.
+    container: mcr.microsoft.com/dotnet/sdk:10.0
+    timeout-minutes: 60
+    steps:
+      - name: Resolve version + ref
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ github.event.inputs.version }}"
+          else
+            V="${{ github.event.client_payload.version }}"
+          fi
+          echo "num=$V" >> "$GITHUB_OUTPUT"
+          echo "ref=v$V" >> "$GITHUB_OUTPUT"
+
+      # System deps (from linux-build/Dockerfile): clang (NativeAOT linker), zlib1g-dev (AOT runtime),
+      # libfuse2 (AppImage mount), git/unzip/zip, curl+gnupg (Node apt source).
+      - name: Install system deps
+        shell: bash
+        run: |
+          apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            clang zlib1g-dev libfuse2 curl gnupg ca-certificates git unzip zip
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Checkout private source (read-only PAT)
+        uses: actions/checkout@v6
+        with:
+          repository: vuminhquang/VDG_CleanCode
+          token: ${{ secrets.PRIVATE_SRC_PAT }}
+          ref: ${{ steps.ver.outputs.ref }}
+          persist-credentials: false
+
+      # Node.js 22 + electron-builder (from the Dockerfile — nodesource apt + global electron-builder).
+      - name: Install Node.js + electron-builder
+        shell: bash
+        run: |
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y --no-install-recommends nodejs
+          npm install -g electron-builder@26
+
+      # BitMono — IL obfuscator invoked by VDG.CleanCode.csproj <Target ObfuscateBeforeAot>. Platform-
+      # agnostic (.NET IL), needed for the Linux AOT publish too.
+      - name: Install BitMono obfuscator (pinned)
+        shell: bash
+        run: |
+          dotnet tool install --global BitMono.GlobalTool --version 0.39.0
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      # The repo NuGet.config's vdg-local feed is %USERPROFILE%-based (the local pod bind-mounts the
+      # host's .vdg-nuget; the runner has none → NU1301). Add the GH Packages source for VDG.Matrix.Sdk
+      # and drop the dead local feed (same as build-mac.yml/build-win.yml).
+      - name: Configure NuGet sources (GH Packages)
+        shell: bash
+        run: |
+          dotnet nuget add source "https://nuget.pkg.github.com/vdg-solutions/index.json" \
+            --name github-vdg --username vdg-solutions \
+            --password "${{ secrets.GITHUB_TOKEN }}" --store-password-in-clear-text \
+            --configfile NuGet.config
+          dotnet nuget disable source vdg-local --configfile NuGet.config
+
+      # Build steps mirror build-cleancode.sh: AOT publish server (+ obfuscate) and agent for linux-x64,
+      # then electron-builder packages the AppImage. CI flags strip debug symbols.
+      - name: Publish server (linux-x64, AOT + obfuscate)
+        shell: bash
+        run: |
+          dotnet publish src/server/VDG.CleanCode/VDG.CleanCode.csproj \
+            -r linux-x64 -c Release -o dist/server \
+            -p:PublishAot=true -p:Obfuscate=true -p:DebugType=none -p:DebugSymbols=false --nologo
+
+      - name: Publish agent (linux-x64, AOT)
+        shell: bash
+        run: |
+          dotnet publish src/relay/VDG.CleanCode.RemoteAgent/VDG.CleanCode.RemoteAgent.csproj \
+            -r linux-x64 -c Release -o dist/agent \
+            -p:PublishAot=true -p:DebugType=none -p:DebugSymbols=false --nologo
+
+      - name: Package AppImage (electron-builder)
+        shell: bash
+        working-directory: src/clients/desktop
+        run: |
+          npm install --silent
+          npx electron-builder --linux --x64 \
+            --config.extraMetadata.version="${{ steps.ver.outputs.num }}" \
+            --publish never
+
+      - name: Verify dist
+        shell: bash
+        run: |
+          ls -la dist/server/ || (echo "MISSING dist/server" && exit 1)
+          ls -la dist/agent/  || (echo "MISSING dist/agent"  && exit 1)
+          ls src/clients/desktop/dist/*.AppImage || (echo "MISSING AppImage" && exit 1)
+
+      # Upload to a VDG_CleanCode_Publish release (same-repo upload via built-in GITHUB_TOKEN).
+      - name: Upload AppImage to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: v${{ steps.ver.outputs.num }}
+        run: |
+          gh release create "$TAG" --target master --title "CleanCode $TAG" --generate-notes || true
+          cd src/clients/desktop/dist
+          for f in *.AppImage latest-linux.yml; do
+            [ -f "$f" ] && gh release upload "$TAG" "$f" --clobber || true
+          done
